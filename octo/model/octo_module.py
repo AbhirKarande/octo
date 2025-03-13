@@ -95,6 +95,7 @@ class OctoTransformer(nn.Module):
         readouts: Optional[Sequence[str]] = None,
         train: bool = False,
         verbose: bool = False,
+        deterministic: Optional[bool] = None,
     ) -> Dict[str, TokenGroup]:
         """
         Args:
@@ -106,6 +107,7 @@ class OctoTransformer(nn.Module):
             readouts: A list of readouts to compute. If None, defaults to all readouts. Must be a subset of the readouts specified in the model config.
             train: Whether model is being trained.
             verbose: If True, prints out the transformer structure.
+            deterministic: Override for deterministic mode (None = use not train)
 
         Returns:
             transformer_outputs: A dictionary {token_group_name: token_group},
@@ -114,6 +116,9 @@ class OctoTransformer(nn.Module):
 
         Note: Horizon can be anything <= max_horizon.
         """
+        if deterministic is None:
+            deterministic = not train
+
         if readouts is None:
             readouts = list(self.readouts.keys())
 
@@ -281,6 +286,7 @@ class OctoTransformer(nn.Module):
             all_timestep_groups,
             train=train,
             verbose=verbose,
+            deterministic=deterministic,
         )
         outputs = {}
         outputs.update(
@@ -342,7 +348,7 @@ class OctoModule(nn.Module):
     heads: Dict[str, nn.Module]
 
     def __call__(
-        self, observations, tasks, timestep_pad_mask, train=True, verbose=False
+        self, observations, tasks, timestep_pad_mask, train=True, verbose=False, deterministic=None
     ):
         """Run transformer and the main method for all heads. Useful for init.
 
@@ -354,17 +360,20 @@ class OctoModule(nn.Module):
             timestep_pad_mask: A boolean mask of shape (batch, horizon) where False indicates a padded timestep.
             train: Run in training mode
             verbose: If True, prints out the structure of the OctoTransformer (useful for debugging!)
+            deterministic: Override for deterministic mode (None = use not train)
 
         Returns:
             transformer_outputs: See OctoTransformer.__call__
             head_outputs: dictionary of outputs from heads {head_name: output}
         """
+        if deterministic is None:
+            deterministic = not train
         transformer_outputs = self.octo_transformer(
-            observations, tasks, timestep_pad_mask, train=train, verbose=verbose
+            observations, tasks, timestep_pad_mask, train=train, deterministic=deterministic, verbose=verbose
         )
         head_outputs = {}
         for head_name, head in self.heads.items():
-            head_outputs[head_name] = head(transformer_outputs, train=train)
+            head_outputs[head_name] = head(transformer_outputs, train=train, deterministic=deterministic)
         return transformer_outputs, head_outputs
 
     @classmethod
