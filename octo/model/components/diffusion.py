@@ -78,15 +78,13 @@ class MLP(nn.Module):
     dropout_rate: Optional[float] = None
 
     @nn.compact
-    def __call__(self, x: jax.Array, train: bool = False, deterministic: Optional[bool] = None) -> jax.Array:
-        if deterministic is None:
-            deterministic = not train
+    def __call__(self, x: jax.Array, train: bool = False) -> jax.Array:
         for i, size in enumerate(self.hidden_dims):
             x = nn.Dense(size, kernel_init=default_init())(x)
 
             if i + 1 < len(self.hidden_dims) or self.activate_final:
                 if self.dropout_rate is not None and self.dropout_rate > 0:
-                    x = nn.Dropout(rate=self.dropout_rate)(x, deterministic=deterministic)
+                    x = nn.Dropout(rate=self.dropout_rate)(x, deterministic=not train)
                 if self.use_layer_norm:
                     x = nn.LayerNorm()(x)
                 x = self.activation(x)

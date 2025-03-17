@@ -195,28 +195,24 @@ class Transformer(nn.Module):
     add_position_embedding: bool = False
 
     @nn.compact
-    def __call__(self, x, attention_mask, *, train, deterministic=None):
+    def __call__(self, x, attention_mask, *, train):
         """Applies Transformer model on the inputs.
 
         Args:
           x: Inputs to the layer.
           train: Set to `True` when training.
-          deterministic: Override for deterministic mode (None = use not train)
 
         Returns:
           output of a transformer encoder.
         """
         assert x.ndim == 3  # (batch, len, emb)
-        
-        if deterministic is None:
-            deterministic = not train
 
         if self.add_position_embedding:
             x = AddPositionEmbs(
                 posemb_init=nn.initializers.normal(stddev=0.02),  # from BERT.
                 name="posembed_input",
             )(x)
-            x = nn.Dropout(rate=self.dropout_rate)(x, deterministic=deterministic)
+            x = nn.Dropout(rate=self.dropout_rate)(x, deterministic=not train)
 
         # Input Encoder
         for lyr in range(self.num_layers):
@@ -226,7 +222,7 @@ class Transformer(nn.Module):
                 attention_dropout_rate=self.attention_dropout_rate,
                 name=f"encoderblock_{lyr}",
                 num_heads=self.num_attention_heads,
-            )(x, attention_mask, deterministic=deterministic)
+            )(x, attention_mask, deterministic=not train)
         encoded = nn.LayerNorm(name="encoder_norm")(x)
 
         return encoded

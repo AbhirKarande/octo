@@ -169,7 +169,7 @@ class OctoModel:
 
     @partial(
         jax.jit,
-        static_argnames=("train", "sample_shape", "argmax", "mc_dropout"),
+        static_argnames=("train", "sample_shape", "argmax"),
     )
     def sample_actions(
         self,
@@ -183,7 +183,6 @@ class OctoModel:
         sample_shape: Tuple[int, ...] = (),
         rng: Optional[PRNGKey] = None,
         temperature: float = 1.0,
-        mc_dropout: bool = False,
     ):
         """Samples actions from the model. See `action_heads.py` for more info.
 
@@ -202,29 +201,12 @@ class OctoModel:
         if timestep_pad_mask is None:
             timestep_pad_mask = observations["timestep_pad_mask"]
 
-        # Calculate deterministic flag for MC Dropout
-        deterministic = not mc_dropout if not train else None
-
-        if mc_dropout:
-            if rng is None:
-                raise ValueError("Must provide rng when using mc_dropout")
-            rng, dropout_rng = jax.random.split(rng)
-        
-        transformer_outputs, head_outputs = self.module.apply(
-            {"params": self.params},
-            observations,
-            tasks,
-            timestep_pad_mask,
-            train=train,
-            deterministic=deterministic,
-            verbose=False,
-            rngs={"dropout": dropout_rng} if mc_dropout else {},
+        transformer_outputs = self.run_transformer(
+            observations, tasks, timestep_pad_mask, train=train
         )
-        
-        # Get the raw distribution parameters
-        action_head: ActionHead = self.module.bind({"params": self.params}).heads["action"]
-        dist_params = action_head.get_distribution_parameters(head_outputs)
-        
+        action_head: ActionHead = self.module.bind({"params": self.params}).heads[
+            "action"
+        ]
         action = action_head.predict_action(
             transformer_outputs,
             train=train,
@@ -267,7 +249,7 @@ class OctoModel:
                 )
             else:
                 raise ValueError(f"Unknown normalization type: {normalization_type}")
-        return action, dist_params
+        return action
 
     @classmethod
     def load_pretrained(
