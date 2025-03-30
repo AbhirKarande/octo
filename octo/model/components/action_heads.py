@@ -219,6 +219,38 @@ class ContinuousActionHead(nn.Module, ActionHead):
         mean = self(transformer_outputs, train=train)[:, -1]
         return jnp.broadcast_to(mean, sample_shape + mean.shape)
 
+    def predict_action_with_uncertainty(
+        self,
+        transformer_outputs: Dict[str, TokenGroup],
+        num_samples: int,
+        rng: PRNGKey,
+        **kwargs,
+    ):
+        """
+        Predict actions using Monte Carlo dropout and return both the mean prediction and an uncertainty estimate.
+
+        Args:
+            transformer_outputs: Dictionary of transformer outputs (including the token group with key self.readout_key).
+            num_samples: Number of forward passes to perform.
+            rng: A PRNG key used for dropout.
+            **kwargs: Additional keyword arguments that will be passed to predict_action.
+
+        Returns:
+            A tuple (mean_prediction, uncertainty) where:
+              - mean_prediction is the average predicted actions.
+              - uncertainty is computed as the standard deviation across predictions.
+        """
+        predictions = []
+        for _ in range(num_samples):
+            rng, subkey = jax.random.split(rng)
+            # Setting train=True ensures that dropout is active.
+            pred = self.predict_action(transformer_outputs, train=True, rng=subkey, **kwargs)
+            predictions.append(pred)
+        predictions = jnp.stack(predictions, axis=0)
+        mean_prediction = jnp.mean(predictions, axis=0)
+        uncertainty = jnp.std(predictions, axis=0)
+        return mean_prediction, uncertainty
+
 
 class DiscreteActionHead(nn.Module, ActionHead):
     """
@@ -365,6 +397,38 @@ class DiscreteActionHead(nn.Module, ActionHead):
                 jnp.int32
             )
         return self.action_tokenizer.decode(action_tokens)
+
+    def predict_action_with_uncertainty(
+        self,
+        transformer_outputs: Dict[str, TokenGroup],
+        num_samples: int,
+        rng: PRNGKey,
+        **kwargs,
+    ):
+        """
+        Predict actions using Monte Carlo dropout and return both the mean prediction and an uncertainty estimate.
+
+        Args:
+            transformer_outputs: Dictionary of transformer outputs (including the token group with key self.readout_key).
+            num_samples: Number of forward passes to perform.
+            rng: A PRNG key used for dropout.
+            **kwargs: Additional keyword arguments that will be passed to predict_action.
+
+        Returns:
+            A tuple (mean_prediction, uncertainty) where:
+              - mean_prediction is the average predicted actions.
+              - uncertainty is computed as the standard deviation across predictions.
+        """
+        predictions = []
+        for _ in range(num_samples):
+            rng, subkey = jax.random.split(rng)
+            # Setting train=True ensures that dropout is active.
+            pred = self.predict_action(transformer_outputs, train=True, rng=subkey, **kwargs)
+            predictions.append(pred)
+        predictions = jnp.stack(predictions, axis=0)
+        mean_prediction = jnp.mean(predictions, axis=0)
+        uncertainty = jnp.std(predictions, axis=0)
+        return mean_prediction, uncertainty
 
 
 class MSEActionHead(ContinuousActionHead):
@@ -609,6 +673,38 @@ class DiffusionActionHead(nn.Module):
         # only get the last timestep in the window
         return actions[..., -1, :, :]
 
+    def predict_action_with_uncertainty(
+        self,
+        transformer_outputs: Dict[str, TokenGroup],
+        num_samples: int,
+        rng: PRNGKey,
+        **kwargs,
+    ):
+        """
+        Predict actions using Monte Carlo dropout and return both the mean prediction and an uncertainty estimate.
+
+        Args:
+            transformer_outputs: Dictionary of transformer outputs (including the token group with key self.readout_key).
+            num_samples: Number of forward passes to perform.
+            rng: A PRNG key used for dropout.
+            **kwargs: Additional keyword arguments that will be passed to predict_action.
+
+        Returns:
+            A tuple (mean_prediction, uncertainty) where:
+              - mean_prediction is the average predicted actions.
+              - uncertainty is computed as the standard deviation across predictions.
+        """
+        predictions = []
+        for _ in range(num_samples):
+            rng, subkey = jax.random.split(rng)
+            # Setting train=True ensures that dropout is active.
+            pred = self.predict_action(transformer_outputs, train=True, rng=subkey, **kwargs)
+            predictions.append(pred)
+        predictions = jnp.stack(predictions, axis=0)
+        mean_prediction = jnp.mean(predictions, axis=0)
+        uncertainty = jnp.std(predictions, axis=0)
+        return mean_prediction, uncertainty
+
 
 class UNetDDPMActionHead(nn.Module):
     """Predicts actions using a diffusion process and a U-Net architecture (unlike MLP above)
@@ -850,3 +946,35 @@ class UNetDDPMActionHead(nn.Module):
         )
 
         return noisy_action
+
+    def predict_action_with_uncertainty(
+        self,
+        transformer_outputs: Dict[str, TokenGroup],
+        num_samples: int,
+        rng: PRNGKey,
+        **kwargs,
+    ):
+        """
+        Predict actions using Monte Carlo dropout and return both the mean prediction and an uncertainty estimate.
+
+        Args:
+            transformer_outputs: Dictionary of transformer outputs (including the token group with key self.readout_key).
+            num_samples: Number of forward passes to perform.
+            rng: A PRNG key used for dropout.
+            **kwargs: Additional keyword arguments that will be passed to predict_action.
+
+        Returns:
+            A tuple (mean_prediction, uncertainty) where:
+              - mean_prediction is the average predicted actions.
+              - uncertainty is computed as the standard deviation across predictions.
+        """
+        predictions = []
+        for _ in range(num_samples):
+            rng, subkey = jax.random.split(rng)
+            # Setting train=True ensures that dropout is active.
+            pred = self.predict_action(transformer_outputs, train=True, rng=subkey, **kwargs)
+            predictions.append(pred)
+        predictions = jnp.stack(predictions, axis=0)
+        mean_prediction = jnp.mean(predictions, axis=0)
+        uncertainty = jnp.std(predictions, axis=0)
+        return mean_prediction, uncertainty
