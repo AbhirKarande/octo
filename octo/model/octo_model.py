@@ -139,7 +139,6 @@ class OctoModel:
         tasks: Data,
         timestep_pad_mask: ArrayLike,
         train: bool = False,
-        rng: Optional[PRNGKey] = None,
     ):
         """Runs the transformer, but does shape checking on the inputs.
 
@@ -150,7 +149,6 @@ class OctoModel:
                 Shape must be consistent with self.example_batch["task"]
             timestep_pad_mask: (batch_size, window_size) Boolean mask that is False when the timestep corresponds to padding
             train: whether to run in train mode
-            rng: Optional RNG key for dropout
         """
         _verify_shapes(
             observations,
@@ -160,7 +158,6 @@ class OctoModel:
         )
         _verify_shapes(tasks, "tasks", self.example_batch["task"], starting_dim=1)
 
-        rngs = {'dropout': rng} if rng is not None else {}
         return self.module.apply(
             {"params": self.params},
             observations,
@@ -168,12 +165,11 @@ class OctoModel:
             timestep_pad_mask,
             train=train,
             method="octo_transformer",
-            rngs=rngs,
         )
 
     @partial(
         jax.jit,
-        static_argnames=("train", "sample_shape", "argmax", "return_uncertainty"),
+        static_argnames=("train", "sample_shape", "argmax"),
     )
     def sample_actions(
         self,
@@ -182,72 +178,77 @@ class OctoModel:
         unnormalization_statistics: Optional[Data] = None,
         normalization_type: NormalizationType = NormalizationType.NORMAL,
         timestep_pad_mask: Optional[ArrayLike] = None,
-        train: bool = True,
+        train: bool = False,
         argmax: bool = False,
         sample_shape: Tuple[int, ...] = (),
-        return_uncertainty: bool = False,
         rng: Optional[PRNGKey] = None,
         temperature: float = 1.0,
     ):
-        """Returns (mean, std) if return_uncertainty=True, else actions"""
+        """Samples actions from the model. See `action_heads.py` for more info.
+
+        Args:
+            observations: dictionary of arrays of shape (batch_size, window_size, *)
+            tasks: dict of tasks of shape (batch_size, *)
+            unnormalization_statistics: dict of statistics for unnormalizing actions (must contain "mean",
+                "std", and optionally "mask")
+            normalization_type: type of normalization applied to the actions
+            timestep_pad_mask: (batch_size, window_size) Boolean mask that is False when the timestep corresponds to padding
+            train: whether to run in train mode
+            ...see `action_heads.py` for the rest of the kwargs.
+        Returns:
+            actions: (*sample_shape, batch_size, action_horizon, action_dim)
+        """
         if timestep_pad_mask is None:
             timestep_pad_mask = observations["timestep_pad_mask"]
 
-        def _sample(rng):
-            dropout_rng, action_rng = None, None
-            if rng is not None:
-                rng, dropout_rng, action_rng = jax.random.split(rng, 3)
-
-            transformer_outputs = self.run_transformer(
-                observations,
-                tasks,
-                timestep_pad_mask,
-                train=train,
-                rng=dropout_rng
-            )
-            return self.module.bind({"params": self.params}).heads["action"].predict_action(
-                transformer_outputs,
-                train=train,
-                argmax=argmax,
-                sample_shape=sample_shape,
-                rng=action_rng,
-                temperature=temperature,
-                embodiment_action_dim=len(unnormalization_statistics["mean"])
-                if unnormalization_statistics is not None
-                else None,
-            )
-
-        if return_uncertainty:
-            num_samples = sample_shape[0] if sample_shape else 1
-            rngs = jax.random.split(rng, num_samples)
-            actions = jax.vmap(_sample)(rngs)
-            mean = jnp.mean(actions, axis=0)
-            std = jnp.std(actions, axis=0)
-            
-            if unnormalization_statistics is not None:
-                # Unnormalize both mean and std using the same statistics
-                mean = self._unnormalize(mean, unnormalization_statistics, normalization_type)
-                std = std * unnormalization_statistics["std"]  # Scale std by original std
-            
-            return mean, std
-        else:
-            action = _sample(rng)
-            if unnormalization_statistics is not None:
-                action = self._unnormalize(action, unnormalization_statistics, normalization_type)
-            return action
-
-    def _unnormalize(self, action, stats, normalization_type):
-        """Helper method to unnormalize actions"""
-        if normalization_type == NormalizationType.NORMAL:
-            mask = stats.get("mask", jnp.ones_like(stats["mean"], dtype=bool))
-            action = jnp.where(mask, action * stats["std"] + stats["mean"], action)
-        elif normalization_type == NormalizationType.BOUNDS:
-            mask = stats.get("mask", jnp.ones_like(stats["p01"], dtype=bool))
-            action = jnp.where(
-                mask,
-                (action + 1) * (stats["p99"] - stats["p01"]) / 2 + stats["p01"],
-                action,
-            )
+        transformer_outputs = self.run_transformer(
+            observations, tasks, timestep_pad_mask, train=train
+        )
+        action_head: ActionHead = self.module.bind({"params": self.params}).heads[
+            "action"
+        ]
+        action = action_head.predict_action(
+            transformer_outputs,
+            train=train,
+            argmax=argmax,
+            sample_shape=sample_shape,
+            rng=rng,
+            temperature=temperature,
+            embodiment_action_dim=len(unnormalization_statistics["mean"])
+            if unnormalization_statistics is not None
+            else None,
+        )
+        if unnormalization_statistics is not None:
+            if normalization_type == NormalizationType.NORMAL:
+                mask = unnormalization_statistics.get(
+                    "mask",
+                    jnp.ones_like(unnormalization_statistics["mean"], dtype=bool),
+                )
+                action = action[..., : len(mask)]
+                action = jnp.where(
+                    mask,
+                    (action * unnormalization_statistics["std"])
+                    + unnormalization_statistics["mean"],
+                    action,
+                )
+            elif normalization_type == NormalizationType.BOUNDS:
+                mask = unnormalization_statistics.get(
+                    "mask", jnp.ones_like(unnormalization_statistics["p01"], dtype=bool)
+                )
+                action = action[..., : len(mask)]
+                action = jnp.where(
+                    mask,
+                    (action + 1)
+                    * (
+                        unnormalization_statistics["p99"]
+                        - unnormalization_statistics["p01"]
+                    )
+                    / 2
+                    + unnormalization_statistics["p01"],
+                    action,
+                )
+            else:
+                raise ValueError(f"Unknown normalization type: {normalization_type}")
         return action
 
     @classmethod
