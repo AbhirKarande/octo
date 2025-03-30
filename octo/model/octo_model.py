@@ -251,6 +251,82 @@ class OctoModel:
                 raise ValueError(f"Unknown normalization type: {normalization_type}")
         return action
 
+    @partial(
+        jax.jit,
+        static_argnames=("train", "sample_shape", "argmax")
+    )
+    def sample_actions_with_uncertainty(
+        self,
+        observations: Data,
+        tasks: Data,
+        num_samples: int,
+        unnormalization_statistics: Optional[Data] = None,
+        normalization_type: NormalizationType = NormalizationType.NORMAL,
+        timestep_pad_mask: Optional[ArrayLike] = None,
+        train: bool = False,
+        argmax: bool = False,
+        sample_shape: Tuple[int, ...] = (),
+        rng: Optional[PRNGKey] = None,
+        temperature: float = 1.0,
+    ):
+        if timestep_pad_mask is None:
+            timestep_pad_mask = observations["timestep_pad_mask"]
+
+        transformer_outputs = self.run_transformer(
+            observations, tasks, timestep_pad_mask, train=train
+        )
+        action_head = self.module.bind({"params": self.params}).heads["action"]
+
+        # This calls our new helper that runs multiple stochastic forward passes.
+        mean_action, uncertainty = action_head.predict_action_with_uncertainty(
+            transformer_outputs,
+            num_samples=num_samples,
+            rng=rng,
+            train=train,
+            argmax=argmax,
+            sample_shape=sample_shape,
+            temperature=temperature,
+            embodiment_action_dim=(
+                len(unnormalization_statistics["mean"])
+                if unnormalization_statistics is not None
+                else None
+            ),
+        )
+
+        if unnormalization_statistics is not None:
+            if normalization_type == NormalizationType.NORMAL:
+                mask = unnormalization_statistics.get(
+                    "mask",
+                    jnp.ones_like(unnormalization_statistics["mean"], dtype=bool),
+                )
+                mean_action = mean_action[..., :len(mask)]
+                mean_action = jnp.where(
+                    mask,
+                    (mean_action * unnormalization_statistics["std"])
+                    + unnormalization_statistics["mean"],
+                    mean_action,
+                )
+            elif normalization_type == NormalizationType.BOUNDS:
+                mask = unnormalization_statistics.get(
+                    "mask", jnp.ones_like(unnormalization_statistics["p01"], dtype=bool)
+                )
+                mean_action = mean_action[..., :len(mask)]
+                mean_action = jnp.where(
+                    mask,
+                    (mean_action + 1)
+                    * (
+                        unnormalization_statistics["p99"]
+                        - unnormalization_statistics["p01"]
+                    )
+                    / 2
+                    + unnormalization_statistics["p01"],
+                    mean_action,
+                )
+            else:
+                raise ValueError(f"Unknown normalization type: {normalization_type}")
+
+        return mean_action, uncertainty
+
     @classmethod
     def load_pretrained(
         cls,
