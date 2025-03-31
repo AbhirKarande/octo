@@ -240,11 +240,16 @@ class ContinuousActionHead(nn.Module, ActionHead):
               - mean_prediction is the average predicted actions.
               - uncertainty is computed as the standard deviation across predictions.
         """
+        # Ensure num_samples is a Python int.
+        num_samples = int(num_samples)
+        # Remove any duplicate 'train' parameter from kwargs; default to True if not provided.
+        train_val = kwargs.pop("train", True)
+        
         predictions = []
         for _ in range(num_samples):
             rng, subkey = jax.random.split(rng)
-            # Setting train=True ensures that dropout is active.
-            pred = self.predict_action(transformer_outputs, train=True, rng=subkey, **kwargs)
+            # For DiffusionActionHead the signature expects: (transformer_outputs, rng, train, ...)
+            pred = self.predict_action(transformer_outputs, rng=subkey, train=train_val, **kwargs)
             predictions.append(pred)
         predictions = jnp.stack(predictions, axis=0)
         mean_prediction = jnp.mean(predictions, axis=0)
@@ -687,18 +692,23 @@ class DiffusionActionHead(nn.Module):
             transformer_outputs: Dictionary of transformer outputs (including the token group with key self.readout_key).
             num_samples: Number of forward passes to perform.
             rng: A PRNG key used for dropout.
-            **kwargs: Additional keyword arguments that will be passed to predict_action.
+            **kwargs: Additional keyword arguments, e.g. 'train', etc.
 
         Returns:
             A tuple (mean_prediction, uncertainty) where:
               - mean_prediction is the average predicted actions.
               - uncertainty is computed as the standard deviation across predictions.
         """
+        # Ensure num_samples is a Python int.
+        num_samples = int(num_samples)
+        # Remove any duplicate 'train' parameter from kwargs; default to True if not provided.
+        train_val = kwargs.pop("train", True)
+        
         predictions = []
         for _ in range(num_samples):
             rng, subkey = jax.random.split(rng)
-            # Setting train=True ensures that dropout is active.
-            pred = self.predict_action(transformer_outputs, train=True, rng=subkey, **kwargs)
+            # For DiffusionActionHead the signature expects: (transformer_outputs, rng, train, ...)
+            pred = self.predict_action(transformer_outputs, rng=subkey, train=train_val, **kwargs)
             predictions.append(pred)
         predictions = jnp.stack(predictions, axis=0)
         mean_prediction = jnp.mean(predictions, axis=0)
@@ -961,18 +971,23 @@ class UNetDDPMActionHead(nn.Module):
             transformer_outputs: Dictionary of transformer outputs (including the token group with key self.readout_key).
             num_samples: Number of forward passes to perform.
             rng: A PRNG key used for dropout.
-            **kwargs: Additional keyword arguments that will be passed to predict_action.
+            **kwargs: Additional keyword arguments, e.g. 'train', etc.
 
         Returns:
             A tuple (mean_prediction, uncertainty) where:
               - mean_prediction is the average predicted actions.
               - uncertainty is computed as the standard deviation across predictions.
         """
+        # Ensure num_samples is a Python int.
+        num_samples = int(num_samples)
+        # Remove any duplicate 'train' parameter from kwargs; default to True if not provided.
+        train_val = kwargs.pop("train", True)
+        
         predictions = []
         for _ in range(num_samples):
             rng, subkey = jax.random.split(rng)
-            # Setting train=True ensures that dropout is active.
-            pred = self.predict_action(transformer_outputs, train=True, rng=subkey, **kwargs)
+            # For DiffusionActionHead the signature expects: (transformer_outputs, rng, train, ...)
+            pred = self.predict_action(transformer_outputs, rng=subkey, train=train_val, **kwargs)
             predictions.append(pred)
         predictions = jnp.stack(predictions, axis=0)
         mean_prediction = jnp.mean(predictions, axis=0)
