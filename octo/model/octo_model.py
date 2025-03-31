@@ -253,7 +253,7 @@ class OctoModel:
 
     @partial(
         jax.jit,
-        static_argnames=("train", "sample_shape", "argmax")
+        static_argnames=("train", "sample_shape", "argmax", "num_samples")
     )
     def sample_actions_with_uncertainty(
         self,
@@ -277,7 +277,7 @@ class OctoModel:
         )
         action_head = self.module.bind({"params": self.params}).heads["action"]
 
-        # This calls our new helper that runs multiple stochastic forward passes.
+        # Our helper that runs multiple stochastic forward passes.
         mean_action, uncertainty = action_head.predict_action_with_uncertainty(
             transformer_outputs,
             num_samples=num_samples,
@@ -299,7 +299,8 @@ class OctoModel:
                     "mask",
                     jnp.ones_like(unnormalization_statistics["mean"], dtype=bool),
                 )
-                mean_action = mean_action[..., :len(mask)]
+                mask_len = int(mask.shape[0])  # use static slice length
+                mean_action = mean_action[..., :mask_len]
                 mean_action = jnp.where(
                     mask,
                     (mean_action * unnormalization_statistics["std"])
@@ -310,7 +311,8 @@ class OctoModel:
                 mask = unnormalization_statistics.get(
                     "mask", jnp.ones_like(unnormalization_statistics["p01"], dtype=bool)
                 )
-                mean_action = mean_action[..., :len(mask)]
+                mask_len = int(mask.shape[0])
+                mean_action = mean_action[..., :mask_len]
                 mean_action = jnp.where(
                     mask,
                     (mean_action + 1)
