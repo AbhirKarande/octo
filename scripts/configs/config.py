@@ -2,7 +2,7 @@ from ml_collections import ConfigDict
 from ml_collections.config_dict import FieldReference, placeholder
 
 from octo.data.utils.text_processing import MuseEmbedding
-from octo.model.components.action_heads import MSEActionHead
+from octo.model.components.action_heads import DiscreteActionHead
 from octo.model.components.tokenizers import ImageTokenizer
 from octo.model.components.transformer import common_transformer_sizes
 from octo.model.components.vit_encoders import SmallStem16
@@ -17,7 +17,7 @@ def get_model_config(transformer_size):
     a small convolutional stem before entering the transformer.
 
     The action head pools all the observation token embeddings, and passes it through a small MLP
-    before predicting the action using a MSE loss.
+    before predicting the action using a discrete loss with 256 bins per dimension.
     """
     token_embedding_size, transformer_kwargs = common_transformer_sizes(
         transformer_size
@@ -36,10 +36,14 @@ def get_model_config(transformer_size):
         task_tokenizers=dict(),
         heads=dict(
             action=ModuleSpec.create(
-                MSEActionHead,
+                DiscreteActionHead,
                 pred_horizon=1,
                 action_dim=7,
                 readout_key="obs",
+                use_map=True,
+                token_per="action_dim_and_pred_horizon",
+                vocab_size=256,
+                normalization_type="uniform",
             ),
         ),
         readouts=dict(),
