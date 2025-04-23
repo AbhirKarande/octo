@@ -9,7 +9,7 @@ get_base_config = imp.load_source(
 ).get_config
 
 from octo.data.utils.text_processing import HFTokenizer
-from octo.model.components.action_heads import DiffusionActionHead
+from octo.model.components.action_heads import DiscreteActionHead
 from octo.model.components.tokenizers import ImageTokenizer, LanguageTokenizer
 from octo.model.components.vit_encoders import SmallStem16
 from octo.utils.spec import ModuleSpec
@@ -51,11 +51,14 @@ def get_config(config_string=None):
     }
     config["model"]["readouts"] = {"action": 1}
     config["model"]["heads"]["action"] = ModuleSpec.create(
-        DiffusionActionHead,
+        DiscreteActionHead,
         readout_key="readout_action",
-        use_map=False,
-        pred_horizon=4,
+        use_map=True,
+        pred_horizon=1,
         action_dim=7,
+        token_per="action_dim_and_pred_horizon",
+        vocab_size=256,
+        normalization_type="uniform",
     )
 
     # We augment differently for the primary and wrist cameras
