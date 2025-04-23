@@ -1,7 +1,7 @@
 from functools import partial
 import json
 import logging
-from typing import Any, Optional, Tuple
+from typing import Any, Optional, Tuple, Dict
 
 import flax
 from flax import struct
@@ -169,7 +169,7 @@ class OctoModel:
         sample_shape: Tuple[int, ...] = (),
         rng: Optional[PRNGKey] = None,
         temperature: float = 1.0,
-    ):
+    ) -> Tuple[ArrayLike, Dict[str, ArrayLike]]:
         """Samples actions from the model. See `action_heads.py` for more info.
 
         Args:
@@ -180,6 +180,9 @@ class OctoModel:
             ...see `action_heads.py` for the rest of the kwargs.
         Returns:
             actions: (*sample_shape, batch_size, pred_horizon, action_dim)
+            action_info: Dictionary containing:
+                - probs: (*sample_shape, batch_size, pred_horizon, action_dim, vocab_size)
+                - entropies: (*sample_shape, batch_size, pred_horizon, action_dim)
         """
         if pad_mask is None:
             pad_mask = observations["pad_mask"]

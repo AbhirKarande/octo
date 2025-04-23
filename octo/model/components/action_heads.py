@@ -386,10 +386,23 @@ class DiscreteActionHead(nn.Module, ActionHead):
         sample_shape: tuple = (),
         rng: Optional[PRNGKey] = None,
         temperature: float = 1.0,
-    ) -> jax.Array:
-        """Convenience methods for predicting actions for the final timestep in the window."""
+    ) -> Tuple[jax.Array, Dict[str, jax.Array]]:
+        """Convenience methods for predicting actions for the final timestep in the window.
+        
+        Returns:
+            actions: (*sample_shape, batch_size, pred_horizon, action_dim)
+            action_info: Dictionary containing:
+                - probs: (*sample_shape, batch_size, pred_horizon, action_dim, vocab_size)
+                - entropies: (*sample_shape, batch_size, pred_horizon, action_dim)
+        """
         # only get the last timestep in the window
         action_logits = self(transformer_outputs, train=train)[:, -1]
+        
+        # Compute probabilities
+        probs = jax.nn.softmax(action_logits / temperature, axis=-1)
+        
+        # Compute entropies
+        entropies = -jnp.sum(probs * jnp.log(probs + 1e-10), axis=-1)
 
         if argmax:
             action_tokens = jnp.argmax(action_logits, axis=-1).astype(jnp.int32)
@@ -401,7 +414,17 @@ class DiscreteActionHead(nn.Module, ActionHead):
             action_tokens = dist.sample(seed=rng, sample_shape=sample_shape).astype(
                 jnp.int32
             )
-        return self.action_tokenizer.decode(action_tokens)
+            
+        # Broadcast probs and entropies to match sample_shape
+        probs = jnp.broadcast_to(probs, sample_shape + probs.shape)
+        entropies = jnp.broadcast_to(entropies, sample_shape + entropies.shape)
+            
+        actions = self.action_tokenizer.decode(action_tokens)
+        action_info = {
+            "probs": probs,
+            "entropies": entropies
+        }
+        return actions, action_info
 
 
 class MSEActionHead(ContinuousActionHead):
