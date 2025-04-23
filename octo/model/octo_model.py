@@ -129,7 +129,7 @@ class OctoModel:
 
     @partial(jax.jit, static_argnames=("train",))
     def run_transformer(
-        self, observations: Data, tasks: Data, pad_mask: ArrayLike, train: bool = False
+        self, observations: Data, tasks: Data, pad_mask: ArrayLike, train: bool = True
     ):
         """Runs the transformer, but does shape checking on the inputs.
 
@@ -164,7 +164,7 @@ class OctoModel:
         observations: Data,
         tasks: Data,
         pad_mask: Optional[ArrayLike] = None,
-        train: bool = False,
+        train: bool = True,
         argmax: bool = False,
         sample_shape: Tuple[int, ...] = (),
         rng: Optional[PRNGKey] = None,
@@ -259,7 +259,7 @@ class OctoModel:
         module = OctoModule.create(**config["model"])
         # infer params shape without actually doing any computation
         params_shape = jax.eval_shape(
-            partial(module.init, train=False),
+            partial(module.init, train=True),
             jax.random.PRNGKey(0),
             example_batch["observation"],
             example_batch["task"],
@@ -380,12 +380,12 @@ class OctoModel:
 
         if verbose:
             print(
-                module.tabulate(rng, *init_args, train=False, verbose=True, depth=2)
+                module.tabulate(rng, *init_args, train=True, verbose=True, depth=2)
             )  # Prints out the parameter count of our model, and tokenizer details
 
         @jax.jit
         def _init(rng):
-            return module.init(rng, *init_args, train=False)
+            return module.init(rng, *init_args, train=True)
 
         params = _init(rng)["params"]
 
