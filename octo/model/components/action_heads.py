@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 import logging
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Union
 
 import distrax
 from einops import rearrange
@@ -210,14 +210,39 @@ class ContinuousActionHead(nn.Module, ActionHead):
         self,
         transformer_outputs: Dict[str, TokenGroup],
         train: bool = True,
+        return_uncertainty: bool = False,
         *args,
         sample_shape: tuple = (),
         **kwargs,
-    ) -> jax.Array:
-        """Convenience methods for predicting actions for the final timestep in the window."""
+    ) -> Union[jax.Array, Tuple[jax.Array, jax.Array]]:
+        """Convenience methods for predicting actions for the final timestep in the window.
+        
+        Args:
+            transformer_outputs: Dictionary of transformer outputs
+            train: Whether to run in training mode
+            return_uncertainty: Whether to return uncertainty estimates along with actions
+            sample_shape: Shape of samples to generate
+            
+        Returns:
+            If return_uncertainty is False:
+                actions: Array of shape (*sample_shape, batch_size, action_horizon, action_dim)
+            If return_uncertainty is True:
+                Tuple of:
+                    actions: Array of shape (*sample_shape, batch_size, action_horizon, action_dim)
+                    uncertainty: Array of shape (*sample_shape, batch_size, action_horizon, action_dim)
+        """
         # only get the last timestep in the window
         mean = self(transformer_outputs, train=train)[:, -1]
-        return jnp.broadcast_to(mean, sample_shape + mean.shape)
+        mean = jnp.broadcast_to(mean, sample_shape + mean.shape)
+        
+        if return_uncertainty:
+            # For continuous actions, we can estimate uncertainty using the tanh derivative
+            # The derivative of tanh(x) is 1 - tanh^2(x), which gives us a measure of uncertainty
+            # at the boundaries of the action space
+            uncertainty = 1 - jnp.tanh(mean / self.max_action) ** 2
+            return mean, uncertainty
+        else:
+            return mean
 
     def predict_action_with_uncertainty(
         self,
@@ -600,83 +625,114 @@ class DiffusionActionHead(nn.Module):
         rng: PRNGKey,
         train: bool = True,
         embodiment_action_dim: Optional[int] = None,
+        return_uncertainty: bool = False,
         *args,
         sample_shape: tuple = (),
         **kwargs,
-    ) -> jax.Array:
-        """Convenience methods for predicting actions for the final timestep in the window."""
-        if embodiment_action_dim is None:
-            logging.warning(
-                "embodiment_action_dim is highly recommended for diffusion action head"
-                " if any action dimensions were masked during training"
+    ) -> Union[jax.Array, Tuple[jax.Array, jax.Array]]:
+        """Convenience methods for predicting actions for the final timestep in the window.
+        
+        Args:
+            transformer_outputs: Dictionary of transformer outputs
+            rng: Random number generator key
+            train: Whether to run in training mode
+            embodiment_action_dim: Optional dimension of the embodiment's action space
+            return_uncertainty: Whether to return uncertainty estimates along with actions
+            sample_shape: Shape of samples to generate
+            
+        Returns:
+            If return_uncertainty is False:
+                actions: Array of shape (*sample_shape, batch_size, action_horizon, action_dim)
+            If return_uncertainty is True:
+                Tuple of:
+                    actions: Array of shape (*sample_shape, batch_size, action_horizon, action_dim)
+                    uncertainty: Array of shape (*sample_shape, batch_size, action_horizon, action_dim)
+        """
+        if return_uncertainty:
+            # Use the existing predict_action_with_uncertainty method
+            mean_prediction, uncertainty = self.predict_action_with_uncertainty(
+                transformer_outputs,
+                num_samples=5,  # Use a small number of samples for efficiency
+                rng=rng,
+                train=train,
+                embodiment_action_dim=embodiment_action_dim,
+                **kwargs
             )
-        batch_size, window_size = transformer_outputs[self.readout_key].tokens.shape[:2]
-        module, variables = self.unbind()
+            return mean_prediction, uncertainty
+        else:
+            # Original implementation
+            if embodiment_action_dim is None:
+                logging.warning(
+                    "embodiment_action_dim is highly recommended for diffusion action head"
+                    " if any action dimensions were masked during training"
+                )
+            batch_size, window_size = transformer_outputs[self.readout_key].tokens.shape[:2]
+            module, variables = self.unbind()
 
-        action_mask = jnp.ones(
-            (
-                *sample_shape,
-                batch_size,
-                window_size,
-                self.action_horizon,
-                self.action_dim,
-            ),
-            dtype=bool,
-        )
-        if embodiment_action_dim is not None:
-            action_mask = action_mask.at[..., embodiment_action_dim:].set(False)
-        flat_action_mask = rearrange(action_mask, "... p a -> ... (p a)")
-
-        def scan_fn(carry, time):
-            current_x, rng = carry
-            input_time = jnp.broadcast_to(time, (*current_x.shape[:-1], 1))
-
-            eps_pred = module.apply(
-                variables, transformer_outputs, input_time, current_x, train=train
+            action_mask = jnp.ones(
+                (
+                    *sample_shape,
+                    batch_size,
+                    window_size,
+                    self.action_horizon,
+                    self.action_dim,
+                ),
+                dtype=bool,
             )
+            if embodiment_action_dim is not None:
+                action_mask = action_mask.at[..., embodiment_action_dim:].set(False)
+            flat_action_mask = rearrange(action_mask, "... p a -> ... (p a)")
 
-            alpha_1 = 1 / jnp.sqrt(self.alphas[time])
-            alpha_2 = (1 - self.alphas[time]) / (jnp.sqrt(1 - self.alpha_hats[time]))
-            current_x = alpha_1 * (current_x - alpha_2 * eps_pred)
+            def scan_fn(carry, time):
+                current_x, rng = carry
+                input_time = jnp.broadcast_to(time, (*current_x.shape[:-1], 1))
+
+                eps_pred = module.apply(
+                    variables, transformer_outputs, input_time, current_x, train=train
+                )
+
+                alpha_1 = 1 / jnp.sqrt(self.alphas[time])
+                alpha_2 = (1 - self.alphas[time]) / (jnp.sqrt(1 - self.alpha_hats[time]))
+                current_x = alpha_1 * (current_x - alpha_2 * eps_pred)
+
+                rng, key = jax.random.split(rng)
+                z = jax.random.normal(key, shape=current_x.shape)
+                current_x = current_x + (time > 0) * (jnp.sqrt(self.betas[time]) * z)
+
+                current_x = jnp.clip(current_x, -self.max_action, self.max_action)
+
+                # set non-eval actions to the noise that would have been seen during training
+                current_x = jnp.where(
+                    flat_action_mask, current_x, jnp.sqrt(1 - self.alpha_hats[time]) * z
+                )
+
+                return (current_x, rng), ()
 
             rng, key = jax.random.split(rng)
-            z = jax.random.normal(key, shape=current_x.shape)
-            current_x = current_x + (time > 0) * (jnp.sqrt(self.betas[time]) * z)
-
-            current_x = jnp.clip(current_x, -self.max_action, self.max_action)
-
-            # set non-eval actions to the noise that would have been seen during training
-            current_x = jnp.where(
-                flat_action_mask, current_x, jnp.sqrt(1 - self.alpha_hats[time]) * z
+            noise = jax.random.normal(
+                key,
+                (
+                    *sample_shape,
+                    batch_size,
+                    window_size,
+                    self.action_horizon * self.action_dim,
+                ),
             )
 
-            return (current_x, rng), ()
+            (actions_flat, _), () = jax.lax.scan(
+                scan_fn,
+                (noise, rng),
+                jnp.arange(self.diffusion_steps - 1, -1, -1),
+            )
 
-        rng, key = jax.random.split(rng)
-        noise = jax.random.normal(
-            key,
-            (
-                *sample_shape,
-                batch_size,
-                window_size,
-                self.action_horizon * self.action_dim,
-            ),
-        )
-
-        (actions_flat, _), () = jax.lax.scan(
-            scan_fn,
-            (noise, rng),
-            jnp.arange(self.diffusion_steps - 1, -1, -1),
-        )
-
-        actions = rearrange(
-            actions_flat,
-            "... (h a) -> ... h a",
-            h=self.action_horizon,
-            a=self.action_dim,
-        )
-        # only get the last timestep in the window
-        return actions[..., -1, :, :]
+            actions = rearrange(
+                actions_flat,
+                "... (h a) -> ... h a",
+                h=self.action_horizon,
+                a=self.action_dim,
+            )
+            # only get the last timestep in the window
+            return actions[..., -1, :, :]
 
     def predict_action_with_uncertainty(
         self,
