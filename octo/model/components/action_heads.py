@@ -633,18 +633,13 @@ class DiffusionActionHead(nn.Module):
                 a=self.action_dim,
             )
             
-            # Calculate entropy per action dimension
-            # Get only the last timestep
-            log_probs_last = log_probs[:, -1]  # Shape: (batch_size, pred_horizon, action_dim)
-            
-            # Calculate entropy for each dimension separately
+            # Calculate entropy-like metric for each dimension separately
             entropies = []
             for dim in range(self.action_dim):
                 # Get log probs for this dimension
-                dim_log_probs = log_probs_last[:, :, dim]  # Shape: (batch_size, pred_horizon)
-                # Normalize log probabilities for this dimension
-                dim_log_probs = dim_log_probs - jax.scipy.special.logsumexp(dim_log_probs, axis=0, keepdims=True)
-                # Calculate entropy for this dimension
+                dim_log_probs = log_probs[:, :, dim]  # Shape: (batch_size, pred_horizon)
+
+                # Calculate entropy-like metric for this dimension by summing over batch (axis=0)
                 dim_entropy = -jnp.sum(jnp.exp(dim_log_probs) * dim_log_probs, axis=0)  # Shape: (pred_horizon,)
                 entropies.append(dim_entropy)
             
