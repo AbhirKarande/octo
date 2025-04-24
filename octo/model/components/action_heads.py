@@ -634,9 +634,14 @@ class DiffusionActionHead(nn.Module):
             )
             
             # Calculate entropy for each action dimension separately
-            # We normalize the log probabilities for each dimension independently
-            log_probs = log_probs - jax.scipy.special.logsumexp(log_probs, axis=-1, keepdims=True)
-            entropy = -jnp.sum(jnp.exp(log_probs) * log_probs, axis=-1)
+            # We need to reshape to handle each action dimension independently
+            log_probs_reshaped = rearrange(log_probs, "b w p a -> (b w p) a")
+            # Normalize log probabilities for each action dimension
+            log_probs_reshaped = log_probs_reshaped - jax.scipy.special.logsumexp(log_probs_reshaped, axis=-1, keepdims=True)
+            # Calculate entropy for each action dimension
+            entropy_reshaped = -jnp.sum(jnp.exp(log_probs_reshaped) * log_probs_reshaped, axis=-1)
+            # Reshape back to original dimensions
+            entropy = rearrange(entropy_reshaped, "(b w p) -> b w p", b=batch_size, w=window_size, p=self.pred_horizon)
             
             # only get the last timestep in the window
             return actions[:, -1], log_probs[:, -1], entropy[:, -1]
