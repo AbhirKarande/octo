@@ -178,6 +178,7 @@ class ContinuousActionHead(nn.Module, ActionHead):
     loss_type: str = "mse"
 
     def setup(self):
+        self.pred_horizon = 1  # Force pred_horizon to 1
         if self.use_map:
             self.map_head = MAPHead()
         self.mean_proj = nn.Dense(self.pred_horizon * self.action_dim)
@@ -451,6 +452,7 @@ class DiffusionActionHead(nn.Module):
     diffusion_steps: int = 20
 
     def setup(self):
+        self.pred_horizon = 1  # Force pred_horizon to 1
         if self.use_map:
             self.map_head = MAPHead()
 
