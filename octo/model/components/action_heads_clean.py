@@ -633,16 +633,6 @@ class DiffusionActionHead(nn.Module):
                 a=self.action_dim,
             )
             
-            # Calculate entropy for each action dimension separately
-            # We need to reshape to handle each action dimension independently
-            log_probs_reshaped = rearrange(log_probs, "b w p a -> (b w p) a")
-            # Normalize log probabilities for each action dimension
-            log_probs_reshaped = log_probs_reshaped - jax.scipy.special.logsumexp(log_probs_reshaped, axis=-1, keepdims=True)
-            # Calculate entropy for each action dimension
-            entropy_reshaped = -jnp.sum(jnp.exp(log_probs_reshaped) * log_probs_reshaped, axis=-1)
-            # Reshape back to original dimensions
-            entropy = rearrange(entropy_reshaped, "(b w p) -> b w p", b=batch_size, w=window_size, p=self.pred_horizon)
-            
             # Calculate entropy per action dimension
             # Get only the last timestep
             log_probs_last = log_probs[:, -1]  # Shape: (batch_size, pred_horizon, action_dim)
@@ -662,7 +652,7 @@ class DiffusionActionHead(nn.Module):
             entropy = jnp.stack(entropies, axis=-1)  # Shape: (pred_horizon, action_dim)
             
             # only get the last timestep in the window
-            return actions[:, -1], log_probs[:, -1], entropy[:, -1]
+            return actions[:, -1], log_probs[:, -1], entropy
 
         n_samples = int(np.prod(sample_shape))
         actions, log_probs, entropy = jax.vmap(sample_actions)(jax.random.split(rng, n_samples))
@@ -675,4 +665,4 @@ class DiffusionActionHead(nn.Module):
         return actions, {
             'log_probs': log_probs,
             'entropy': entropy
-        }
+        } 
