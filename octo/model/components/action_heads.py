@@ -246,12 +246,15 @@ class ContinuousActionHead(nn.Module, ActionHead):
     def predict_action(
         self,
         transformer_outputs: Dict[str, TokenGroup],
-        train: bool = True,
-        *args,
-        sample_shape: tuple = (),
-        **kwargs,
-    ) -> jax.Array:
-        """Convenience methods for predicting actions for the final timestep in the window."""
+        argmax: bool = False,
+        sample_shape: Tuple[int, ...] = (),
+        rng: Optional[PRNGKey] = None,
+        temperature: float = 1.0,
+        train: bool = False,
+    ) -> Array:
+        """Predict the action for the last timestep in the window. Returns shape
+        (*sample_shape, batch_size, pred_horizon, action_dim).
+        """
         # only get the last timestep in the window
         # (batch, pred_horizon, action_dim)
         mean = self(transformer_outputs, train=train)[:, -1]
@@ -586,10 +589,9 @@ class DiffusionActionHead(nn.Module):
             alpha_2 = (1 - self.alphas[time]) / (jnp.sqrt(1 - self.alpha_hats[time]))
             current_x = alpha_1 * (current_x - alpha_2 * eps_pred)
 
-            # Update log probabilities based on the noise prediction
-            # We approximate the probability using the predicted noise
+            # Update log probabilities based on the noise prediction for each dimension separately
             # The probability is higher when the predicted noise is closer to the actual noise
-            noise_log_prob = -0.5 * jnp.sum(eps_pred ** 2, axis=-1, keepdims=True)
+            noise_log_prob = -0.5 * eps_pred ** 2  # Shape: (batch_size, window_size, pred_horizon * action_dim)
             log_probs = log_probs + noise_log_prob
 
             rng, key = jax.random.split(rng)
@@ -631,10 +633,10 @@ class DiffusionActionHead(nn.Module):
                 a=self.action_dim,
             )
             
-            # Calculate entropy from log probabilities
-            # We normalize the log probabilities to get proper probability distributions
+            # Calculate entropy for each action dimension separately
+            # We normalize the log probabilities for each dimension independently
             log_probs = log_probs - jax.scipy.special.logsumexp(log_probs, axis=-1, keepdims=True)
-            entropy = -jnp.sum(jnp.exp(log_probs) * log_probs, axis=-1, keepdims=True)
+            entropy = -jnp.sum(jnp.exp(log_probs) * log_probs, axis=-1)
             
             # only get the last timestep in the window
             return actions[:, -1], log_probs[:, -1], entropy[:, -1]
