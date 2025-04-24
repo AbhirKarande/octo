@@ -664,5 +664,6 @@ class DiffusionActionHead(nn.Module):
         
         return actions, {
             'log_probs': log_probs,
-            'entropy': entropy
+            'entropy': entropy,
+            'test': 'test'
         } 
