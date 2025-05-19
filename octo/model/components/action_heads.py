@@ -566,13 +566,14 @@ class DiffusionActionHead(nn.Module):
         *args,
         sample_shape: tuple = (),
         **kwargs,
-    ) -> Tuple[jax.Array, jax.Array, jax.Array]:
+    ) -> Tuple[jax.Array, Dict[str, jax.Array]]:
         """Convenience methods for predicting actions for the final timestep in the window.
         
         Returns:
             actions: Array of shape (*sample_shape, batch_size, pred_horizon, action_dim)
-            log_probs: Array of shape (*sample_shape, batch_size, pred_horizon, action_dim)
-            entropy: Array of shape (*sample_shape, batch_size, pred_horizon, action_dim)
+            probs_and_entropy: Dictionary containing:
+                - 'log_probs': Array of shape (*sample_shape, batch_size, pred_horizon, action_dim)
+                - 'entropy': Array of shape (*sample_shape, batch_size, pred_horizon, action_dim)
         """
         module, variables = self.unbind()
 
@@ -656,4 +657,7 @@ class DiffusionActionHead(nn.Module):
         log_probs = log_probs.reshape(sample_shape + log_probs.shape[1:])
         entropy = entropy.reshape(sample_shape + entropy.shape[1:])
         
-        return actions, log_probs, entropy 
+        return actions, {
+            'log_probs': log_probs,
+            'entropy': entropy
+        } 
