@@ -394,17 +394,28 @@ class DiscreteActionHead(nn.Module, ActionHead):
         # only get the last timestep in the window
         action_logits = self(transformer_outputs, train=train)[:, -1]
 
+        dist = distrax.Categorical(logits=action_logits / temperature)
+
         if argmax:
             action_tokens = jnp.argmax(action_logits, axis=-1).astype(jnp.int32)
             action_tokens = jnp.broadcast_to(
                 action_tokens, sample_shape + action_tokens.shape
             )
         else:
-            dist = distrax.Categorical(logits=action_logits / temperature)
             action_tokens = dist.sample(seed=rng, sample_shape=sample_shape).astype(
                 jnp.int32
             )
-        return self.action_tokenizer.decode(action_tokens)
+        
+        actions = self.action_tokenizer.decode(action_tokens)
+
+        # compute entropy
+        entropy = dist.entropy()
+        entropy = jnp.broadcast_to(entropy, sample_shape + entropy.shape)
+
+        return actions, {
+            "entropy": entropy,
+            "log_probs": dist.log_prob(action_tokens),
+        }
 
 
 class MSEActionHead(ContinuousActionHead):

@@ -19,6 +19,7 @@ from octo.model.components.action_heads import ActionHead
 from octo.model.octo_module import OctoModule
 from octo.utils.spec import ModuleSpec
 from octo.utils.typing import Config, Data, Params, PRNGKey, Sequence
+from octo.utils.train_utils import NormalizationType
 
 
 @struct.dataclass
@@ -163,6 +164,8 @@ class OctoModel:
         self,
         observations: Data,
         tasks: Data,
+        unnormalization_statistics: Optional[Data] = None,
+        normalization_type: NormalizationType = NormalizationType.NORMAL,
         pad_mask: Optional[ArrayLike] = None,
         train: bool = False,
         argmax: bool = False,
@@ -171,15 +174,17 @@ class OctoModel:
         temperature: float = 1.0,
     ):
         """Samples actions from the model. See `action_heads.py` for more info.
-
         Args:
             observations: dictionary of arrays of shape (batch_size, window_size, *)
             tasks: dict of tasks of shape (batch_size, *)
+            unnormalization_statistics: dict of statistics for unnormalizing actions (must contain "mean",
+                "std", and optionally "mask")
+            normalization_type: type of normalization applied to the actions
             pad_mask: (batch_size, window_size) Boolean mask that is False when the timestep corresponds to padding
             train: whether to run in train mode
             ...see `action_heads.py` for the rest of the kwargs.
         Returns:
-            actions: (*sample_shape, batch_size, pred_horizon, action_dim)
+            actions: (*sample_shape, batch_size, action_horizon, action_dim)
         """
         if pad_mask is None:
             pad_mask = observations["pad_mask"]
@@ -190,7 +195,7 @@ class OctoModel:
         action_head: ActionHead = self.module.bind({"params": self.params}).heads[
             "action"
         ]
-        return action_head.predict_action(
+        pred = action_head.predict_action(
             transformer_outputs,
             train=train,
             argmax=argmax,
@@ -198,6 +203,43 @@ class OctoModel:
             rng=rng,
             temperature=temperature,
         )
+        if isinstance(pred, tuple):
+            action, info = pred
+        else:
+            action, info = pred, {}
+
+        if unnormalization_statistics is not None:
+            if normalization_type == NormalizationType.NORMAL:
+                mask = unnormalization_statistics.get(
+                    "mask",
+                    jnp.ones_like(unnormalization_statistics["mean"], dtype=bool),
+                )
+                action = action[..., : len(mask)]
+                action = jnp.where(
+                    mask,
+                    (action * unnormalization_statistics["std"])
+                    + unnormalization_statistics["mean"],
+                    action,
+                )
+            elif normalization_type == NormalizationType.BOUNDS:
+                mask = unnormalization_statistics.get(
+                    "mask", jnp.ones_like(unnormalization_statistics["p01"], dtype=bool)
+                )
+                action = action[..., : len(mask)]
+                action = jnp.where(
+                    mask,
+                    (action + 1)
+                    * (
+                        unnormalization_statistics["p99"]
+                        - unnormalization_statistics["p01"]
+                    )
+                    / 2
+                    + unnormalization_statistics["p01"],
+                    action,
+                )
+            else:
+                raise ValueError(f"Unknown normalization type: {normalization_type}")
+        return action, info
 
     @classmethod
     def load_pretrained(
