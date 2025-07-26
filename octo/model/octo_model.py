@@ -202,7 +202,7 @@ class OctoModel:
         action_head: ActionHead = self.module.bind({"params": self.params}).heads[
             "action"
         ]
-        logging.info("Action head type: %s", type(action_head))
+        jax.debug.print("Action head type: {x}", x=type(action_head))
         pred = action_head.predict_action(
             transformer_outputs,
             train=train,
