@@ -2,6 +2,7 @@ from functools import partial
 import json
 import logging
 from typing import Any, Optional, Tuple
+from enum import Enum
 
 import flax
 from flax import struct
@@ -19,7 +20,13 @@ from octo.model.components.action_heads import ActionHead
 from octo.model.octo_module import OctoModule
 from octo.utils.spec import ModuleSpec
 from octo.utils.typing import Config, Data, Params, PRNGKey, Sequence
-from octo.utils.train_utils import NormalizationType
+
+class NormalizationType(str, Enum):
+    """Enum for normalization types."""
+
+    NORMAL = "normal"
+    BOUNDS = "bounds"
+
 
 
 @struct.dataclass
