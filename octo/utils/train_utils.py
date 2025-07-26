@@ -3,7 +3,7 @@ from contextlib import contextmanager
 from fnmatch import fnmatch
 import logging
 import time
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, TYPE_CHECKING
 
 import flax
 from flax import struct
@@ -15,15 +15,17 @@ import numpy as np
 import optax
 
 from octo.data.utils.text_processing import TextProcessor
-from octo.model.octo_model import OctoModel
 from octo.utils import jax_utils
 from octo.utils.typing import Config, Data, Params, PRNGKey
+
+if TYPE_CHECKING:
+    from octo.model.octo_model import OctoModel
 
 
 @struct.dataclass
 class TrainState:
     rng: PRNGKey
-    model: OctoModel
+    model: "OctoModel"
     step: int
     opt_state: optax.OptState
     tx: optax.GradientTransformation = struct.field(pytree_node=False)
@@ -32,7 +34,7 @@ class TrainState:
     def create(
         cls,
         rng: PRNGKey,
-        model: OctoModel,
+        model: "OctoModel",
         tx: optax.GradientTransformation,
     ):
         opt_state = tx.init(model.params)
