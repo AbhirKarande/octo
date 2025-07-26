@@ -16,7 +16,7 @@ import orbax.checkpoint
 import tensorflow as tf
 
 from octo.data.utils.text_processing import TextProcessor
-from octo.model.components.action_heads import ActionHead, DiscreteActionHead
+from octo.model.components.action_heads import ActionHead
 from octo.model.octo_module import OctoModule
 from octo.utils.spec import ModuleSpec
 from octo.utils.typing import Config, Data, Params, PRNGKey, Sequence
@@ -202,7 +202,7 @@ class OctoModel:
         action_head: ActionHead = self.module.bind({"params": self.params}).heads[
             "action"
         ]
-        assert isinstance(action_head, DiscreteActionHead)
+        logging.info("Action head type: %s", type(action_head))
         pred = action_head.predict_action(
             transformer_outputs,
             train=train,
