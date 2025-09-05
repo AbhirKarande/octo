@@ -43,7 +43,7 @@ class ActionHead(ABC):
         sample_shape: Tuple[int, ...] = (),
         rng: Optional[PRNGKey] = None,
         temperature: float = 1.0,
-        train: bool = False,
+        train: bool = True,
     ) -> Array:
         """Predict the action for the last timestep in the window. Returns shape
         (*sample_shape, batch_size, pred_horizon, action_dim).
@@ -250,7 +250,7 @@ class ContinuousActionHead(nn.Module, ActionHead):
         sample_shape: Tuple[int, ...] = (),
         rng: Optional[PRNGKey] = None,
         temperature: float = 1.0,
-        train: bool = False,
+        train: bool = True,
     ) -> Array:
         """Predict the action for the last timestep in the window. Returns shape
         (*sample_shape, batch_size, pred_horizon, action_dim).

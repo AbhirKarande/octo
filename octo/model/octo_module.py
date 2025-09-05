@@ -89,7 +89,7 @@ class OctoTransformer(nn.Module):
         tasks: Data,
         pad_mask: jax.Array,
         readouts: Optional[Sequence[str]] = None,
-        train: bool = False,
+        train: bool = True,
         verbose: bool = False,
     ) -> Dict[str, TokenGroup]:
         """

@@ -64,7 +64,7 @@ class MLP(nn.Module):
     dropout_rate: Optional[float] = None
 
     @nn.compact
-    def __call__(self, x: jax.Array, train: bool = False) -> jax.Array:
+    def __call__(self, x: jax.Array, train: bool = True) -> jax.Array:
         for i, size in enumerate(self.hidden_dims):
             x = nn.Dense(size, kernel_init=default_init())(x)
 
@@ -84,7 +84,7 @@ class MLPResNetBlock(nn.Module):
     use_layer_norm: bool = False
 
     @nn.compact
-    def __call__(self, x, train: bool = False):
+    def __call__(self, x, train: bool = True):
         residual = x
         if self.dropout_rate is not None and self.dropout_rate > 0:
             x = nn.Dropout(rate=self.dropout_rate)(x, deterministic=not train)
@@ -109,7 +109,7 @@ class MLPResNet(nn.Module):
     activation: Callable = nn.swish
 
     @nn.compact
-    def __call__(self, x: jax.typing.ArrayLike, train: bool = False) -> jax.Array:
+    def __call__(self, x: jax.typing.ArrayLike, train: bool = True) -> jax.Array:
         x = nn.Dense(self.hidden_dim, kernel_init=default_init())(x)
         for _ in range(self.num_blocks):
             x = MLPResNetBlock(

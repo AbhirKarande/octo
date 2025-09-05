@@ -29,7 +29,7 @@ def create_validation_dataset(
     dataset_kwargs: dict,
     traj_transform_kwargs: dict,
     frame_transform_kwargs: dict,
-    train: bool = False,
+    train: bool = True,
 ):
     """Creates a dataset for validation and visualization purposes.
 
@@ -177,7 +177,7 @@ class ValidationCallback(Callback):
     val_shuffle_buffer_size: int
     num_val_batches: int
     modes_to_evaluate: Sequence[str] = ("text_conditioned", "image_conditioned")
-    train: bool = False
+    train: bool = True
 
     def __post_init__(self):
         if self.text_processor is not None:
@@ -260,7 +260,7 @@ class VisualizationCallback(Callback):
     trajs_for_viz: int
     samples_per_state: int
     modes_to_evaluate: str = ("text_conditioned", "image_conditioned")
-    train: bool = False
+    train: bool = True
 
     def __post_init__(self):
         self.zero_text = jax.tree_map(lambda x: x[0], self.text_processor.encode(""))
