@@ -137,7 +137,7 @@ class OctoModel:
 
     @partial(jax.jit, static_argnames=("train",))
     def run_transformer(
-        self, observations: Data, tasks: Data, pad_mask: ArrayLike, train: bool = False
+        self, observations: Data, tasks: Data, pad_mask: ArrayLike, train: bool = True
     ):
         """Runs the transformer, but does shape checking on the inputs.
 
@@ -174,7 +174,7 @@ class OctoModel:
         unnormalization_statistics: Optional[Data] = None,
         normalization_type: NormalizationType = NormalizationType.NORMAL,
         pad_mask: Optional[ArrayLike] = None,
-        train: bool = False,
+        train: bool = True,
         argmax: bool = False,
         sample_shape: Tuple[int, ...] = (),
         rng: Optional[PRNGKey] = None,
@@ -202,7 +202,6 @@ class OctoModel:
         action_head: ActionHead = self.module.bind({"params": self.params}).heads[
             "action"
         ]
-        jax.debug.print("Action head type: {x}", x=type(action_head))
         pred = action_head.predict_action(
             transformer_outputs,
             train=train,

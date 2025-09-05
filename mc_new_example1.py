@@ -1,3 +1,4 @@
+
 import os
 import subprocess
 import zipfile
@@ -76,7 +77,7 @@ download_all_rt_1_checkpoints()
 
 # @title Select your model and environment
 
-task_name = "google_robot_pick_coke_can"  # @param ["google_robot_pick_coke_can", "google_robot_move_near", "google_robot_open_drawer", "google_robot_close_drawer", "widowx_spoon_on_towel", "widowx_carrot_on_plate", "widowx_stack_cube", "widowx_put_eggplant_in_basket"]
+task_name = "google_robot_move_near"  # @param ["google_robot_pick_coke_can", "google_robot_move_near", "google_robot_open_drawer", "google_robot_close_drawer", "widowx_spoon_on_towel", "widowx_carrot_on_plate", "widowx_stack_cube", "widowx_put_eggplant_in_basket"]
 
 if 'env' in locals():
   print("Closing existing env")
@@ -114,13 +115,15 @@ elif "octo" in model_name:
   from transforms3d.euler import euler2axangle
 
   class BatchedOctoInference(OctoInference):
-    def batch_step(self, image: np.ndarray, num_inferences: int, task_description: Optional[str] = None) -> list[tuple[dict[str, np.ndarray], dict[str, np.ndarray], dict]]:
+    def batch_step(self, image: Optional[np.ndarray], num_inferences: int, task_description: Optional[str] = None) -> list[tuple[dict[str, np.ndarray], dict[str, np.ndarray], dict]]:
         if task_description is not None and task_description != self.task_description:
             self.reset(task_description)
 
-        assert image.dtype == np.uint8
-        image_resized = self._resize_image(image)
-        self._add_image_to_history(image_resized)
+        if image is not None:
+            assert image.dtype == np.uint8
+            image_resized = self._resize_image(image)
+            self._add_image_to_history(image_resized)
+
         images, pad_mask = self._obtain_image_history_and_mask()
 
         # Prepare input for a single inference (batch size 1)
@@ -143,7 +146,14 @@ elif "octo" in model_name:
         # The output has shape (num_inferences, batch_size, ...), where batch_size is 1.
         # Squeeze the batch dimension.
         norm_raw_actions_batch = norm_raw_actions_batch.squeeze(axis=1)
-        action_info_batch = jax.tree_map(lambda x: x.squeeze(axis=1), action_info_batch)
+        
+        # Some tensors in action_info_batch might have the history dimension instead of a batch dimension.
+        # Squeeze conditionally to handle this inconsistency.
+        def safe_squeeze(x):
+            if hasattr(x, 'shape') and len(x.shape) > 1 and x.shape[1] == 1:
+                return x.squeeze(axis=1)
+            return x
+        action_info_batch = jax.tree_map(safe_squeeze, action_info_batch)
         
         raw_actions_batch = norm_raw_actions_batch * self.action_std[None] + self.action_mean[None]
 
@@ -213,9 +223,10 @@ import gc
 from datetime import datetime, timedelta
 
 num_episodes = 200
-num_inferences = 10  # Number of samples to generate for entropy calculation
+num_samples_per_inference = 30  # Number of samples per inference for aleatoric uncertainty
+num_mc_inferences = 1           # Number of MC inferences for epistemic uncertainty
 # Create a folder for all JSON files
-output_dir = f"mc_dropout_{task_name}_{num_episodes}_episodes_{num_inferences}_inferences"
+output_dir = f"mc_dropout_{task_name}_{num_episodes}_episodes_{num_mc_inferences}_mc_{num_samples_per_inference}_samples"
 os.makedirs(f"{output_dir}/json", exist_ok=True)
 os.makedirs(f"{output_dir}/video", exist_ok=True)
 
@@ -326,31 +337,69 @@ for episode_id in range(num_episodes):
         frames.append(image)
 
         # --- Perform multiple inferences to get a batch of actions ---
-        results = model.batch_step(image, num_inferences)
+        all_results = []
+        for i in range(num_mc_inferences):
+            # On the first iteration, pass the image to update history.
+            # On subsequent iterations, pass None to reuse the history.
+            current_image = image if i == 0 else None
+            results = model.batch_step(current_image, num_samples_per_inference)
+            all_results.append(results)
 
         # Cleanup the image used for inference
         del image
 
-        # Stack the raw actions from all inferences to calculate statistics
-        raw_actions_batch = np.stack([res[0]["world_vector"] for res in results])
-        raw_rot_batch = np.stack([res[0]["rotation_delta"] for res in results])
-        raw_grip_batch = np.stack([res[0]["open_gripper"] for res in results])
+        # We now have a list of lists of results: (num_mc_inferences, num_samples_per_inference)
+        # Collect all 50 samples for total entropy calculation
+        all_raw_actions_world_vector = np.concatenate([np.stack([res[0]["world_vector"] for res in one_inference_results]) for one_inference_results in all_results], axis=0)
+        all_raw_rot_delta = np.concatenate([np.stack([res[0]["rotation_delta"] for res in one_inference_results]) for one_inference_results in all_results], axis=0)
+        all_raw_grip_open = np.concatenate([np.stack([res[0]["open_gripper"] for res in one_inference_results]) for one_inference_results in all_results], axis=0)
         
-        # Calculate variance and differential entropy for each action dimension
-        world_vector_var = np.var(raw_actions_batch, axis=0)
-        rotation_delta_var = np.var(raw_rot_batch, axis=0)
-        open_gripper_var = np.var(raw_grip_batch, axis=0)
-
-        # Add a small epsilon to variance to avoid log(0)
+        # Calculate mean over all 50 samples for stepping the environment
+        mean_world_vector = np.mean(all_raw_actions_world_vector, axis=0)
+        mean_rotation_delta = np.mean(all_raw_rot_delta, axis=0)
+        mean_open_gripper = np.mean(all_raw_grip_open, axis=0)
+        
+        # Calculate total variance and entropy over all 50 samples
         epsilon = 1e-8
-        world_vector_entropy = 0.5 * np.log(2 * np.pi * np.e * (world_vector_var + epsilon))
-        rotation_delta_entropy = 0.5 * np.log(2 * np.pi * np.e * (rotation_delta_var + epsilon))
-        open_gripper_entropy = 0.5 * np.log(2 * np.pi * np.e * (open_gripper_var + epsilon))
+        total_var_wv = np.var(all_raw_actions_world_vector, axis=0)
+        total_var_rot = np.var(all_raw_rot_delta, axis=0)
+        total_var_grip = np.var(all_raw_grip_open, axis=0)
+        total_entropy = {
+            "world_vector": 0.5 * np.log(2 * np.pi * np.e * (total_var_wv + epsilon)),
+            "rotation_delta": 0.5 * np.log(2 * np.pi * np.e * (total_var_rot + epsilon)),
+            "open_gripper": 0.5 * np.log(2 * np.pi * np.e * (total_var_grip + epsilon)),
+        }
+
+        # Calculate aleatoric and epistemic uncertainty
+        # Aleatoric: Mean of variances within each of the 5 inferences
+        # Epistemic: Variance of means of each of the 5 inferences
+        per_inference_means_wv = np.mean([np.stack([res[0]["world_vector"] for res in r]) for r in all_results], axis=1)
+        per_inference_means_rot = np.mean([np.stack([res[0]["rotation_delta"] for res in r]) for r in all_results], axis=1)
+        per_inference_means_grip = np.mean([np.stack([res[0]["open_gripper"] for res in r]) for r in all_results], axis=1)
+
+        per_inference_vars_wv = np.mean([np.var(np.stack([res[0]["world_vector"] for res in r]), axis=0) for r in all_results], axis=0)
+        per_inference_vars_rot = np.mean([np.var(np.stack([res[0]["rotation_delta"] for res in r]), axis=0) for r in all_results], axis=0)
+        per_inference_vars_grip = np.mean([np.var(np.stack([res[0]["open_gripper"] for res in r]), axis=0) for r in all_results], axis=0)
+
+        epistemic_vars_wv = np.var(per_inference_means_wv, axis=0)
+        epistemic_vars_rot = np.var(per_inference_means_rot, axis=0)
+        epistemic_vars_grip = np.var(per_inference_means_grip, axis=0)
+        
+        aleatoric_entropy = {
+            "world_vector": 0.5 * np.log(2 * np.pi * np.e * (per_inference_vars_wv + epsilon)),
+            "rotation_delta": 0.5 * np.log(2 * np.pi * np.e * (per_inference_vars_rot + epsilon)),
+            "open_gripper": 0.5 * np.log(2 * np.pi * np.e * (per_inference_vars_grip + epsilon)),
+        }
+        epistemic_entropy = {
+            "world_vector": 0.5 * np.log(2 * np.pi * np.e * (epistemic_vars_wv + epsilon)),
+            "rotation_delta": 0.5 * np.log(2 * np.pi * np.e * (epistemic_vars_rot + epsilon)),
+            "open_gripper": 0.5 * np.log(2 * np.pi * np.e * (epistemic_vars_grip + epsilon)),
+        }
 
         # Use the MEAN of the actions to step the environment
-        mean_world_vector = np.mean(raw_actions_batch, axis=0)
-        mean_rotation_delta = np.mean(raw_rot_batch, axis=0)
-        mean_open_gripper = np.mean(raw_grip_batch, axis=0)
+        mean_world_vector = np.mean(all_raw_actions_world_vector, axis=0)
+        mean_rotation_delta = np.mean(all_raw_rot_delta, axis=0)
+        mean_open_gripper = np.mean(all_raw_grip_open, axis=0)
 
         # Reconstruct a single "raw_action" dictionary with the mean values for stepping
         raw_action = {
@@ -394,7 +443,7 @@ for episode_id in range(num_episodes):
 
         # --- Logging ---
         # For logging, we still need action_info from one of the samples (e.g., the first)
-        action_info = results[0][2]
+        action_info = all_results[0][0][2]
         token_argmax_data = []
         token_entropy_data = [] # This will likely be empty for DiffusionActionHead
 
@@ -411,9 +460,9 @@ for episode_id in range(num_episodes):
         
         # Combine entropies for logging
         differential_entropy = {
-            "world_vector": world_vector_entropy,
-            "rotation_delta": rotation_delta_entropy,
-            "open_gripper": open_gripper_entropy,
+            "total_entropy": total_entropy,
+            "aleatoric_entropy": aleatoric_entropy,
+            "epistemic_entropy": epistemic_entropy,
         }
 
         # Use the mean action to step the environment
@@ -433,7 +482,7 @@ for episode_id in range(num_episodes):
         trajectory.append(timestep_log)
 
         # --- Cleanup ---
-        del combined_action, raw_action, action, action_info, results
+        del combined_action, raw_action, action, action_info, all_results
 
         if terminated or truncated or success:
             print(f"Terminated at step {timestep} with success: {success}")
