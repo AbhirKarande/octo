@@ -592,8 +592,15 @@ class DiffusionActionHead(nn.Module):
             current_x, rng, log_probs = carry
             input_time = jnp.broadcast_to(time, (*current_x.shape[:-1], 1))
 
+            # Split RNG to provide a dedicated dropout key for Flax modules that use dropout
+            rng, dropout_key = jax.random.split(rng)
             eps_pred = module.apply(
-                variables, transformer_outputs, input_time, current_x, train=train
+                variables,
+                transformer_outputs,
+                input_time,
+                current_x,
+                train=train,
+                rngs={"dropout": dropout_key},
             )
 
             alpha_1 = 1 / jnp.sqrt(self.alphas[time])
