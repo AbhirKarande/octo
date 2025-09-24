@@ -159,6 +159,7 @@ class OctoInference:
         norm_raw_actions = self.model.sample_actions(
             input_observation,
             self.task,
+            train=False,
             rng=key,
         )
         raw_actions = norm_raw_actions * self.action_std[None] + self.action_mean[None]
