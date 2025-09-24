@@ -199,7 +199,25 @@ class OctoModel:
             actions: (*sample_shape, batch_size, action_horizon, action_dim)
         """
         if timestep_pad_mask is None:
-            timestep_pad_mask = observations["timestep_pad_mask"]
+            # Prefer explicitly provided mask in observations
+            if "timestep_pad_mask" in observations:
+                timestep_pad_mask = observations["timestep_pad_mask"]
+            # Backward-compatibility for older clients using "pad_mask"
+            elif "pad_mask" in observations:
+                timestep_pad_mask = observations["pad_mask"]
+            else:
+                # Construct a full-True mask assuming no padding.
+                # Infer batch and window sizes from the first observation array.
+                first_obs = jax.tree_leaves(observations)[0]
+                batch_size = int(first_obs.shape[0])
+                # Prefer dim 1 if available, otherwise fall back to example_batch
+                if first_obs.ndim >= 2:
+                    window_size = int(first_obs.shape[1])
+                else:
+                    window_size = int(
+                        self.example_batch["observation"]["timestep_pad_mask"].shape[1]
+                    )
+                timestep_pad_mask = jnp.ones((batch_size, window_size), dtype=bool)
 
         transformer_outputs = self.run_transformer(
             observations, tasks, timestep_pad_mask, train=train
@@ -270,7 +288,20 @@ class OctoModel:
         temperature: float = 1.0,
     ):
         if timestep_pad_mask is None:
-            timestep_pad_mask = observations["timestep_pad_mask"]
+            if "timestep_pad_mask" in observations:
+                timestep_pad_mask = observations["timestep_pad_mask"]
+            elif "pad_mask" in observations:
+                timestep_pad_mask = observations["pad_mask"]
+            else:
+                first_obs = jax.tree_leaves(observations)[0]
+                batch_size = int(first_obs.shape[0])
+                if first_obs.ndim >= 2:
+                    window_size = int(first_obs.shape[1])
+                else:
+                    window_size = int(
+                        self.example_batch["observation"]["timestep_pad_mask"].shape[1]
+                    )
+                timestep_pad_mask = jnp.ones((batch_size, window_size), dtype=bool)
 
         transformer_outputs = self.run_transformer(
             observations, tasks, timestep_pad_mask, train=train
